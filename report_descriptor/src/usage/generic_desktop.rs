@@ -1,0 +1,52 @@
+usage! {
+    [0x01]
+    0x01 Pointer
+    0x02 Mouse
+
+    0x04 Joystick
+    0x05 Gamepad
+    0x06 Keyboard
+    0x07 Keypad
+    0x08 MultiAxisController
+    0x09 TabletPcSystemControls
+    0x0a WaterCoolingDevice
+    0x0b ComputerChassisDevice
+    0x0c WirelessRadioControls
+    0x0d PortableDeviceControl
+    0x0e SystemMultiAxisController
+    0x0f SpatialController
+    0x10 AssistiveControl
+    0x11 DeviceDock
+    0x12 DockableDevice
+    0x13 CallStateManagementControl
+
+    0x30 X
+    0x31 Y
+    0x32 Z
+    0x33 Rx
+    0x34 Ry
+    0x35 Rz
+    0x36 Slider
+    0x37 Dial
+    0x38 Wheel
+    0x39 HatSwitch
+    0x3a CountedBuffer
+    0x3b ByteCount
+    0x3c MotionWakeup
+    0x3d Start
+    0x3e Select
+
+    0x40 Vx
+    0x41 Vy
+    0x42 Vz
+    0x43 Vbrx
+    0x44 Vbry
+    0x45 Vbrz
+    0x46 Vno
+    0x47 FeatureNotification
+    0x48 ResolutionMultiplier
+    0x49 Qx
+    0x4a Qy
+    0x4b Qz
+    0x4c Qw
+}
