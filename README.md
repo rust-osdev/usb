@@ -1,5 +1,5 @@
-# Utilities for working with USB HID devices
+# Utilities for working with USB devices
 
 ## Crates
 
-* [`report_descriptor`](report_descriptor/) item parser for Report descriptors.
+* [`report_descriptor`](report_descriptor/) item parser for HID Report descriptors.
