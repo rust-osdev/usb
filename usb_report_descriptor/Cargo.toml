@@ -1,5 +1,5 @@
 [package]
-name = "report_descriptor"
+name = "usb_report_descriptor"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
