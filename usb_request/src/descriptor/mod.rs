@@ -3,7 +3,6 @@ mod device;
 mod endpoint;
 mod hid;
 mod interface;
-mod report;
 mod string;
 
 pub use configuration::*;
@@ -11,7 +10,6 @@ pub use device::*;
 pub use endpoint::*;
 pub use hid::*;
 pub use interface::*;
-pub use report::*;
 pub use string::*;
 
 use core::mem;
@@ -49,7 +47,6 @@ pub enum Descriptor<'a> {
     Interface(Interface),
     Endpoint(Endpoint),
     Hid(Hid),
-    Report(Report<'a>),
     Unknown { ty: u8, data: &'a [u8] },
 }
 
@@ -144,9 +141,6 @@ impl<'a> Iterator for Iter<'a> {
                     Endpoint::from_raw(b).map_err(InvalidDescriptor::Endpoint)?,
                 ),
                 HID => Descriptor::Hid(Hid::from_raw(b).map_err(InvalidDescriptor::Hid)?),
-                REPORT => {
-                    Descriptor::Report(Report::from_raw(b).map_err(InvalidDescriptor::Report)?)
-                }
                 ty => Descriptor::Unknown { ty, data: b },
             };
             self.buf = &buf[usize::from(l)..];
@@ -164,5 +158,4 @@ pub enum InvalidDescriptor {
     Interface(InvalidInterface),
     Endpoint(InvalidEndpoint),
     Hid(InvalidHid),
-    Report(InvalidReport),
 }
