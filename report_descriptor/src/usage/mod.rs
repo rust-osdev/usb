@@ -1,6 +1,6 @@
-//! # References
+//! ## References
 //!
-//! * https://www.usb.org/sites/default/files/hut1_3_0.pdf
+//! * <https://www.usb.org/sites/default/files/hut1_3_0.pdf>
 
 macro_rules! usage {
     { [$page:literal] $($i:literal $v:ident)* } => {

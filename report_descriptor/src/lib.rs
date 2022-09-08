@@ -1,7 +1,4 @@
-//! ## References
-//!
-//! https://www.usb.org/sites/default/files/hid1_11.pdf
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), no_std)]
 
 pub mod usage;
