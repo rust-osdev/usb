@@ -249,13 +249,11 @@ impl Collection {
 pub enum ParseError {
     Truncated,
     UnexpectedData,
-    StackOverflow,
 }
 
 pub struct Parser<'a> {
     data: &'a [u8],
-    usage_page: [u16; 16],
-    stack_index: usize,
+    usage_page: u16,
 }
 
 impl<'a> Iterator for Parser<'a> {
@@ -263,23 +261,10 @@ impl<'a> Iterator for Parser<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         (!self.data.is_empty()).then(|| {
-            use ParseError::*;
             let e;
-            let page = self
-                .usage_page
-                .get_mut(self.stack_index)
-                .ok_or(StackOverflow)?;
-            // TODO update usage page
-            (e, self.data) = Item::parse(self.data, *page)?;
+            (e, self.data) = Item::parse(self.data, self.usage_page)?;
             match &e {
-                Item::Collection(_) => {
-                    self.stack_index += 1;
-                    *self.usage_page.get_mut(self.stack_index).ok_or(StackOverflow)? = *page;
-                }
-                Item::EndCollection => {
-                    self.stack_index -= 1;
-                }
-                Item::UsagePage(p) => *page = p.as_raw(),
+                Item::UsagePage(p) => self.usage_page = p.as_raw(),
                 _ => {}
             }
             Ok(e)
@@ -290,8 +275,7 @@ impl<'a> Iterator for Parser<'a> {
 pub fn parse(data: &[u8]) -> Parser<'_> {
     Parser {
         data,
-        usage_page: [0xffff; 16],
-        stack_index: 0,
+        usage_page: 0,
     }
 }
 
