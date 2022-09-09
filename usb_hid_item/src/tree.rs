@@ -151,7 +151,7 @@ impl<'a, 'p> Iterator for Collection<'a, 'p> {
 
 impl Drop for Collection<'_, '_> {
     fn drop(&mut self) {
-        //while matches!(self.next(), Some(Ok(_))) {}
+        while matches!(self.next(), Some(Ok(_))) {}
     }
 }
 
