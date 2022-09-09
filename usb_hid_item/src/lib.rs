@@ -3,6 +3,34 @@
 
 use core::fmt;
 
+/// A single item.
+///
+/// There are three categories of items:
+///
+/// * Main items (`Input`, `Output`, `Feature`, `Collection`, `EndCollection`)
+/// * Global items
+///
+/// # Main items
+///
+/// Main items define or group data fields.
+/// `Input`, `Output` and `Feature` create new data fields.
+/// `Collection` and `EndCollection` group data fields.
+///
+/// # Global items
+///
+/// Global items define properties of all data fields that are subsequently defined.
+/// Global state can be saved and restored with `Push` and `Pop`.
+///
+/// Global items are `UsagePage`, `LogicalMin`, `LogicalMax`, `PhysicalMin`, `PhysicalMax`,
+/// `UnitExponent`, `Unit`, `ReportSize`, `ReportId`, `ReportCount`.
+///
+/// # Local items
+///
+/// Local items define properties of the next data item.
+/// They are flushed after a Main item is encountered.
+///
+/// Local items are `Usage16`, `Usage32`, `UsageMin`, `UsageMax`, `DesignatorIndex`,
+/// `DesignatorMin`, `DesignatorMax`, `StringIndex`, `StringMin`, `StringMax`, `Delimiter`.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Item<'a> {
@@ -17,7 +45,7 @@ pub enum Item<'a> {
     LogicalMax(i32),
     PhysicalMin(i32),
     PhysicalMax(i32),
-    UnitExponential(u32),
+    UnitExponent(u32),
     Unit(u32),
     ReportSize(u32),
     ReportId(u8),
@@ -135,7 +163,7 @@ impl<'a> Item<'a> {
             Self::LOGI_MAX => Self::LogicalMax(d32i()?),
             Self::PHYS_MIN => Self::PhysicalMin(d32i()?),
             Self::PHYS_MAX => Self::PhysicalMax(d32i()?),
-            Self::UNIT_EXP => Self::UnitExponential(d32u()?),
+            Self::UNIT_EXP => Self::UnitExponent(d32u()?),
             Self::UNIT => Self::Unit(d32u()?),
             Self::REPORT_SIZE => Self::ReportSize(d32u()?),
             Self::REPORT_ID => Self::ReportId(d8()?),
@@ -178,9 +206,10 @@ impl<'a> Item<'a> {
 pub struct MainFlags(pub u32);
 
 macro_rules! flags {
-    { $($flag:ident $bit:literal)* } => {
+    { $($(#[doc = $doc:literal])* $flag:ident $bit:literal)* } => {
         impl MainFlags {
             $(
+                $(#[doc = $doc])*
                 pub fn $flag(&self) -> bool {
                     self.0 & 1 << $bit != 0
                 }
@@ -198,17 +227,62 @@ macro_rules! flags {
 }
 
 flags! {
+    /// Whether a value can be modified by the host.
     constant 0
+    /// Whether array or variable fields are used in reports.
+    ///
+    /// # Example
+    ///
+    /// If a device has 50 buttons where each button has 1 state then:
+    ///
+    /// * With array data there will be 50 fields of 1 bit each (Report Count = 50, Report Size = 1).
+    /// * With variable data and Report Count = 4, Report Size = 6 there will be 4 fields of 5 bits
+    ///   each, where each field points to a single button.
+    ///
+    /// This is more efficient for keyboards, where there are many keys but only a few are pressed at
+    /// any time.
     variable 1
+    /// Whether data is absolute or relative.
+    ///
+    /// # Example
+    ///
+    /// Mice return relative position data whereas tablets return absolute position data.
     relative 2
+    /// Whether data may wrap around.
+    ///
+    /// # Example
+    ///
+    /// A wheel's absolute position may be expressed as a value from 1 to 100.
+    /// If the value becomes 101 it is reported as 1.
+    /// If the value becomes 0 it is reported as 100.
     wrap 3
-    non_linear 4
-    no_preferred 5
-    null_state 6
+    /// Whether the reported data has been processed such that the relation between the real
+    /// and reported value is no longer linear.
+    ///
+    /// # Example
+    ///
+    /// Acceleration curves, joystick dead zones.
+    nonlinear 4
+    /// Whether the control will return to a default state if not interacted with.
+    ///
+    /// # Example
+    ///
+    /// A button only stays pressed when the user interacts with it.
+    /// A switch stays toggled on or off when the user stops interacting with it.
+    nopreferred 5
+    /// Whether there is a state for a control where it doesn't send meaningful data.
+    null 6
+    /// Whether the value of an output control may change without host interaction.
     volatile 7
+    /// Whether the control is a bitfield or emits a stream or arbitrary bytes.
+    ///
+    /// # Example
+    ///
+    /// Bar code reader.
     buffered_bytes 8
 }
 
+/// A collection of items.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Collection {
@@ -239,7 +313,9 @@ impl Collection {
 
 #[derive(Debug)]
 pub enum ParseError {
+    /// An item is longer than the amount of bytes remaining in the buffer.
     Truncated,
+    /// An item has an unexpected data value.
     UnexpectedData,
 }
 
@@ -259,6 +335,7 @@ impl<'a> Iterator for Parser<'a> {
     }
 }
 
+/// Parse a Report descriptor.
 pub fn parse(data: &[u8]) -> Parser<'_> {
     Parser { data }
 }
