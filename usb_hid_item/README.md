@@ -1,4 +1,4 @@
-# Report descriptor item parser
+# HID report descriptor item parser
 
 ## Example
 

@@ -1,5 +1,6 @@
 [workspace]
 members = [
-	"usb_report_descriptor",
+	"usb_hid_item",
+	"usb_hid_usage",
 	"usb_request",
 ]

@@ -1,10 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), no_std)]
 
-pub mod usage;
-
-pub use usage::{Usage, UsagePage};
-
 use core::fmt;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -16,7 +12,7 @@ pub enum Item<'a> {
     Feature(MainFlags),
     EndCollection,
 
-    UsagePage(UsagePage),
+    UsagePage(u16),
     LogicalMin(i32),
     LogicalMax(i32),
     PhysicalMin(i32),
@@ -29,9 +25,10 @@ pub enum Item<'a> {
     Push,
     Pop,
 
-    Usage(Usage),
-    UsageMin(u32),
-    UsageMax(u32),
+    Usage16(u16),
+    Usage32(u16, u16),
+    UsageMin(u16),
+    UsageMax(u16),
     DesignatorIndex(u32),
     DesignatorMin(u32),
     DesignatorMax(u32),
@@ -77,7 +74,7 @@ impl<'a> Item<'a> {
     const STRING_MAX: u8 = 0x98;
     const DELIMITER: u8 = 0xa8;
 
-    fn parse(data: &'a [u8], usage_page: u16) -> Result<(Self, &'a [u8]), ParseError> {
+    fn parse(data: &'a [u8]) -> Result<(Self, &'a [u8]), ParseError> {
         use ParseError::*;
         let prefix = *data.get(0).ok_or(Truncated)?;
         let (size, tag);
@@ -133,7 +130,7 @@ impl<'a> Item<'a> {
             Self::FEATURE => Self::Feature(MainFlags(d32u()?)),
             Self::END_COLLECTION => d_empty(Self::EndCollection)?,
 
-            Self::USAGE_PAGE => Self::UsagePage(UsagePage::from_raw(d16u()?)),
+            Self::USAGE_PAGE => Self::UsagePage(d16u()?),
             Self::LOGI_MIN => Self::LogicalMin(d32i()?),
             Self::LOGI_MAX => Self::LogicalMax(d32i()?),
             Self::PHYS_MIN => Self::PhysicalMin(d32i()?),
@@ -146,20 +143,18 @@ impl<'a> Item<'a> {
             Self::PUSH => Self::Push,
             Self::POP => Self::Pop,
 
-            Self::USAGE => Self::Usage(match d {
-                &[] => Usage::from_raw(usage_page, 0),
-                &[a] => Usage::from_raw(usage_page, u16::from_le_bytes([a, 0])),
-                &[a, b] => Usage::from_raw(usage_page, u16::from_le_bytes([a, b])),
-                &[a, b, c] => {
-                    Usage::from_raw(u16::from_le_bytes([c, 0]), u16::from_le_bytes([a, b]))
-                }
+            Self::USAGE => match d {
+                &[] => Self::Usage16(u16::from_le_bytes([0, 0])),
+                &[a] => Self::Usage16(u16::from_le_bytes([a, 0])),
+                &[a, b] => Self::Usage16(u16::from_le_bytes([a, b])),
+                &[a, b, c] => Self::Usage32(u16::from_le_bytes([c, 0]), u16::from_le_bytes([a, b])),
                 &[a, b, c, d] => {
-                    Usage::from_raw(u16::from_le_bytes([c, d]), u16::from_le_bytes([a, b]))
+                    Self::Usage32(u16::from_le_bytes([c, d]), u16::from_le_bytes([a, b]))
                 }
                 _ => return Err(UnexpectedData),
-            }),
-            Self::USAGE_MIN => Self::UsageMin(d32u()?),
-            Self::USAGE_MAX => Self::UsageMax(d32u()?),
+            },
+            Self::USAGE_MIN => Self::UsageMin(d16u()?),
+            Self::USAGE_MAX => Self::UsageMax(d16u()?),
             Self::DESIGNATOR_INDEX => Self::DesignatorIndex(d32u()?),
             Self::DESIGNATOR_MIN => Self::DesignatorMin(d32u()?),
             Self::DESIGNATOR_MAX => Self::DesignatorMax(d32u()?),
@@ -250,7 +245,6 @@ pub enum ParseError {
 
 pub struct Parser<'a> {
     data: &'a [u8],
-    usage_page: u16,
 }
 
 impl<'a> Iterator for Parser<'a> {
@@ -259,21 +253,14 @@ impl<'a> Iterator for Parser<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         (!self.data.is_empty()).then(|| {
             let e;
-            (e, self.data) = Item::parse(self.data, self.usage_page)?;
-            match &e {
-                Item::UsagePage(p) => self.usage_page = p.as_raw(),
-                _ => {}
-            }
+            (e, self.data) = Item::parse(self.data)?;
             Ok(e)
         })
     }
 }
 
 pub fn parse(data: &[u8]) -> Parser<'_> {
-    Parser {
-        data,
-        usage_page: 0,
-    }
+    Parser { data }
 }
 
 #[cfg(test)]
@@ -298,12 +285,12 @@ mod tests {
     fn qemu_usb_tablet() {
         let mut it = parse(QEMU_USB_TABLET);
         let it = &mut it;
-        tk(it, Item::UsagePage(UsagePage::GenericDesktop));
-        tk(it, Item::Usage(Usage::GenericDesktop(usage::generic_desktop::Usage::Mouse)));
+        tk(it, Item::UsagePage(0x1));
+        tk(it, Item::Usage16(0x2));
         tk(it, Item::Collection(Collection::Application));
-        tk(it, Item::Usage(Usage::GenericDesktop(usage::generic_desktop::Usage::Pointer)));
+        tk(it, Item::Usage16(0x1));
         tk(it, Item::Collection(Collection::Physical));
-        tk(it, Item::UsagePage(UsagePage::Button));
+        tk(it, Item::UsagePage(0x9));
         tk(it, Item::UsageMin(1));
         tk(it, Item::UsageMax(3));
         tk(it, Item::LogicalMin(0));
@@ -314,9 +301,9 @@ mod tests {
         tk(it, Item::ReportCount(1));
         tk(it, Item::ReportSize(5));
         tk(it, Item::Input(MainFlags(0b1))); // constant
-        tk(it, Item::UsagePage(UsagePage::GenericDesktop));
-        tk(it, Item::Usage(Usage::GenericDesktop(usage::generic_desktop::Usage::X)));
-        tk(it, Item::Usage(Usage::GenericDesktop(usage::generic_desktop::Usage::Y)));
+        tk(it, Item::UsagePage(1));
+        tk(it, Item::Usage16(0x30));
+        tk(it, Item::Usage16(0x31));
         tk(it, Item::LogicalMin(0));
         tk(it, Item::LogicalMax(0x7fff));
         tk(it, Item::PhysicalMin(0));
@@ -324,8 +311,8 @@ mod tests {
         tk(it, Item::ReportSize(16));
         tk(it, Item::ReportCount(2));
         tk(it, Item::Input(MainFlags(0b010))); // absolute, variable, data
-        tk(it, Item::UsagePage(UsagePage::GenericDesktop));
-        tk(it, Item::Usage(Usage::GenericDesktop(usage::generic_desktop::Usage::Wheel)));
+        tk(it, Item::UsagePage(1));
+        tk(it, Item::Usage16(0x38));
         tk(it, Item::LogicalMin(-0x7f));
         tk(it, Item::LogicalMax(0x7f));
         tk(it, Item::PhysicalMin(0));
