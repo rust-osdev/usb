@@ -7,10 +7,9 @@ use {
 
 #[derive(Debug)]
 pub struct Parser<'a> {
-    // Splitting the fields and manually reconstructing the item parser allows
-    // avoiding troubles with shared mutable references, lifetimes etc.
-    data: &'a [u8],
-    index: Cell<usize>,
+    // Manually reconstructing the item parser allows avoiding troubles with shared mutable
+    // references, lifetimes etc.
+    data: Cell<&'a [u8]>,
 }
 
 impl<'a> Parser<'a> {
@@ -74,14 +73,14 @@ impl<'a, 'p> Iterator for StackFrame<'a, 'p> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut it = super::Parser {
-            data: self.inner.data.get(self.inner.index.get()..)?,
+            data: self.inner.data.get(),
         };
         loop {
             let item = match it.next()? {
                 Ok(e) => e,
                 Err(e) => return Some(Err(ParseError::from_item(e))),
             };
-            self.inner.index.set(self.inner.data.len() - it.data.len());
+            self.inner.data.set(it.data);
             match item {
                 Item::Collection(ty) => break Some(Ok(Value::Collection(ty))),
                 Item::EndCollection => break Some(Ok(Value::EndCollection)),
@@ -243,10 +242,7 @@ impl Field {
 }
 
 pub fn parse(data: &[u8]) -> Parser<'_> {
-    Parser {
-        data,
-        index: Default::default(),
-    }
+    Parser { data: data.into() }
 }
 
 #[cfg(test)]
