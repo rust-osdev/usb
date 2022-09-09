@@ -3,6 +3,8 @@
 
 use core::fmt;
 
+pub mod tree;
+
 /// A single item.
 ///
 /// There are three categories of items:
@@ -31,7 +33,7 @@ use core::fmt;
 ///
 /// Local items are `Usage16`, `Usage32`, `UsageMin`, `UsageMax`, `DesignatorIndex`,
 /// `DesignatorMin`, `DesignatorMax`, `StringIndex`, `StringMin`, `StringMax`, `Delimiter`.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Item<'a> {
     Input(MainFlags),
@@ -202,7 +204,7 @@ impl<'a> Item<'a> {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MainFlags(pub u32);
 
 macro_rules! flags {
@@ -283,7 +285,7 @@ flags! {
 }
 
 /// A collection of items.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Collection {
     Physical,
