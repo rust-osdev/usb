@@ -1,356 +1,258 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), no_std)]
 
-use core::fmt;
+pub mod item;
 
-pub mod tree;
+pub use item::{Collection, MainFlags};
 
-/// A single item.
-///
-/// There are three categories of items:
-///
-/// * Main items (`Input`, `Output`, `Feature`, `Collection`, `EndCollection`)
-/// * Global items
-///
-/// # Main items
-///
-/// Main items define or group data fields.
-/// `Input`, `Output` and `Feature` create new data fields.
-/// `Collection` and `EndCollection` group data fields.
-///
-/// # Global items
-///
-/// Global items define properties of all data fields that are subsequently defined.
-/// Global state can be saved and restored with `Push` and `Pop`.
-///
-/// Global items are `UsagePage`, `LogicalMin`, `LogicalMax`, `PhysicalMin`, `PhysicalMax`,
-/// `UnitExponent`, `Unit`, `ReportSize`, `ReportId`, `ReportCount`.
-///
-/// # Local items
-///
-/// Local items define properties of the next data item.
-/// They are flushed after a Main item is encountered.
-///
-/// Local items are `Usage16`, `Usage32`, `UsageMin`, `UsageMax`, `DesignatorIndex`,
-/// `DesignatorMin`, `DesignatorMax`, `StringIndex`, `StringMin`, `StringMax`, `Delimiter`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum Item<'a> {
-    Input(MainFlags),
-    Output(MainFlags),
-    Collection(Collection),
-    Feature(MainFlags),
-    EndCollection,
+use {
+    item::Item,
+    core::cell::Cell,
+    core::ops::RangeInclusive,
+};
 
-    UsagePage(u16),
-    LogicalMin(i32),
-    LogicalMax(i32),
-    PhysicalMin(i32),
-    PhysicalMax(i32),
-    UnitExponent(u32),
-    Unit(u32),
-    ReportSize(u32),
-    ReportId(u8),
-    ReportCount(u32),
-    Push,
-    Pop,
-
-    Usage16(u16),
-    Usage32(u16, u16),
-    UsageMin(u16),
-    UsageMax(u16),
-    DesignatorIndex(u32),
-    DesignatorMin(u32),
-    DesignatorMax(u32),
-    StringIndex(u32),
-    StringMin(u32),
-    StringMax(u32),
-    Delimiter(bool),
-
-    Unknown { tag: u8, data: &'a [u8] },
+#[derive(Debug)]
+pub struct Parser<'a> {
+    // Manually reconstructing the item parser allows avoiding troubles with shared mutable
+    // references, lifetimes etc.
+    data: Cell<&'a [u8]>,
 }
 
-impl<'a> Item<'a> {
-    // Main (6.2.2.4)
-    const INPUT: u8 = 0x80;
-    const OUTPUT: u8 = 0x90;
-    const COLLECTION: u8 = 0xa0;
-    const FEATURE: u8 = 0xb0;
-    const END_COLLECTION: u8 = 0xc0;
-
-    // Global (6.2.2.7)
-    const USAGE_PAGE: u8 = 0x04;
-    const LOGI_MIN: u8 = 0x14;
-    const LOGI_MAX: u8 = 0x24;
-    const PHYS_MIN: u8 = 0x34;
-    const PHYS_MAX: u8 = 0x44;
-    const UNIT_EXP: u8 = 0x54;
-    const UNIT: u8 = 0x64;
-    const REPORT_SIZE: u8 = 0x74;
-    const REPORT_ID: u8 = 0x84;
-    const REPORT_COUNT: u8 = 0x94;
-    const PUSH: u8 = 0xa4;
-    const POP: u8 = 0xb4;
-
-    // Local (6.2.2.8)
-    const USAGE: u8 = 0x08;
-    const USAGE_MIN: u8 = 0x18;
-    const USAGE_MAX: u8 = 0x28;
-    const DESIGNATOR_INDEX: u8 = 0x38;
-    const DESIGNATOR_MIN: u8 = 0x48;
-    const DESIGNATOR_MAX: u8 = 0x58;
-    const STRING_INDEX: u8 = 0x78;
-    const STRING_MIN: u8 = 0x88;
-    const STRING_MAX: u8 = 0x98;
-    const DELIMITER: u8 = 0xa8;
-
-    fn parse(data: &'a [u8]) -> Result<(Self, &'a [u8]), ParseError> {
-        use ParseError::*;
-        let prefix = *data.get(0).ok_or(Truncated)?;
-        let (size, tag);
-        if prefix == 0b1111_11_10 {
-            // Long item (6.2.2.3)
-            size = usize::from(*data.get(1).ok_or(Truncated)?);
-            tag = *data.get(2).ok_or(Truncated)?;
-        } else {
-            // Short item (6.2.2.2)
-            size = (1 << (prefix & 0b11)) >> 1;
-            tag = prefix & !0b11;
-        }
-        let d = data.get(1..1 + size).ok_or(Truncated)?;
-        let d8 = || {
-            d.try_into()
-                .map_err(|_| UnexpectedData)
-                .map(u8::from_le_bytes)
-        };
-        let d8u = || {
-            Ok(match d {
-                &[] => 0,
-                &[a] => a,
-                _ => return Err(UnexpectedData),
-            })
-        };
-        let d16u = || {
-            Ok(u16::from_le_bytes(match d {
-                &[] => [0, 0],
-                &[a] => [a, 0],
-                &[a, b] => [a, b],
-                _ => return Err(UnexpectedData),
-            }))
-        };
-        let d32u = || {
-            Ok(u32::from_le_bytes(match d {
-                &[] => [0, 0, 0, 0],
-                &[a] => [a, 0, 0, 0],
-                &[a, b] => [a, b, 0, 0],
-                &[a, b, c] => [a, b, c, 0],
-                &[a, b, c, d] => [a, b, c, d],
-                _ => return Err(UnexpectedData),
-            }))
-        };
-        let d32i = || {
-            Ok(match d {
-                &[] => 0,
-                &[a] => i8::from_le_bytes([a]) as _,
-                &[a, b] => i16::from_le_bytes([a, b]) as _,
-                &[a, b, c] => i32::from_le_bytes([a, b, c, (c as i8 >> 7) as _]),
-                &[a, b, c, d] => i32::from_le_bytes([a, b, c, d]),
-                _ => return Err(UnexpectedData),
-            })
-        };
-        let d_empty = |e| d.is_empty().then(|| e).ok_or(UnexpectedData);
-
-        let item = match tag {
-            Self::INPUT => Self::Input(MainFlags(d32u()?)),
-            Self::OUTPUT => Self::Output(MainFlags(d32u()?)),
-            Self::COLLECTION => Self::Collection(Collection::from_raw(d8u()?)),
-            Self::FEATURE => Self::Feature(MainFlags(d32u()?)),
-            Self::END_COLLECTION => d_empty(Self::EndCollection)?,
-
-            Self::USAGE_PAGE => Self::UsagePage(d16u()?),
-            Self::LOGI_MIN => Self::LogicalMin(d32i()?),
-            Self::LOGI_MAX => Self::LogicalMax(d32i()?),
-            Self::PHYS_MIN => Self::PhysicalMin(d32i()?),
-            Self::PHYS_MAX => Self::PhysicalMax(d32i()?),
-            Self::UNIT_EXP => Self::UnitExponent(d32u()?),
-            Self::UNIT => Self::Unit(d32u()?),
-            Self::REPORT_SIZE => Self::ReportSize(d32u()?),
-            Self::REPORT_ID => Self::ReportId(d8()?),
-            Self::REPORT_COUNT => Self::ReportCount(d32u()?),
-            Self::PUSH => Self::Push,
-            Self::POP => Self::Pop,
-
-            Self::USAGE => match d {
-                &[] => Self::Usage16(u16::from_le_bytes([0, 0])),
-                &[a] => Self::Usage16(u16::from_le_bytes([a, 0])),
-                &[a, b] => Self::Usage16(u16::from_le_bytes([a, b])),
-                &[a, b, c] => Self::Usage32(u16::from_le_bytes([c, 0]), u16::from_le_bytes([a, b])),
-                &[a, b, c, d] => {
-                    Self::Usage32(u16::from_le_bytes([c, d]), u16::from_le_bytes([a, b]))
-                }
-                _ => return Err(UnexpectedData),
-            },
-            Self::USAGE_MIN => Self::UsageMin(d16u()?),
-            Self::USAGE_MAX => Self::UsageMax(d16u()?),
-            Self::DESIGNATOR_INDEX => Self::DesignatorIndex(d32u()?),
-            Self::DESIGNATOR_MIN => Self::DesignatorMin(d32u()?),
-            Self::DESIGNATOR_MAX => Self::DesignatorMax(d32u()?),
-            Self::STRING_INDEX => Self::StringIndex(d32u()?),
-            Self::STRING_MIN => Self::StringMin(d32u()?),
-            Self::STRING_MAX => Self::StringMax(d32u()?),
-            Self::DELIMITER => Self::Delimiter(match d {
-                &[0] => true,
-                &[1] => false,
-                _ => return Err(UnexpectedData),
-            }),
-
-            _ => Self::Unknown { tag, data: d },
-        };
-
-        Ok((item, &data[1 + size..]))
+impl<'a> Parser<'a> {
+    pub fn iter(&mut self) -> StackFrame<'a, '_> {
+        StackFrame::new(self)
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MainFlags(pub u32);
+#[derive(Debug)]
+pub struct StackFrame<'a, 'p> {
+    inner: &'p Parser<'a>,
 
-macro_rules! flags {
-    { $($(#[doc = $doc:literal])* $flag:ident $bit:literal)* } => {
-        impl MainFlags {
-            $(
-                $(#[doc = $doc])*
-                pub fn $flag(&self) -> bool {
-                    self.0 & 1 << $bit != 0
+    // Global state
+    usage_page: u16,
+    logical_min: i32,
+    logical_max: i32,
+    physical_min: i32,
+    physical_max: i32,
+    report_count: u32,
+    report_size: u32,
+
+    // Local state
+    usage_min: Option<u16>,
+    usage_max: Option<u16>,
+}
+
+impl<'a, 'p> StackFrame<'a, 'p> {
+    fn new(inner: &'p Parser<'a>) -> Self {
+        Self {
+            inner,
+            usage_page: Default::default(),
+            usage_min: Default::default(),
+            usage_max: Default::default(),
+            logical_min: Default::default(),
+            logical_max: Default::default(),
+            physical_min: Default::default(),
+            physical_max: Default::default(),
+            report_count: Default::default(),
+            report_size: Default::default(),
+        }
+    }
+
+    fn duplicate(&self) -> Self {
+        Self {
+            inner: self.inner,
+            usage_page: self.usage_page,
+            usage_min: self.usage_min,
+            usage_max: self.usage_max,
+            logical_min: self.logical_min,
+            logical_max: self.logical_max,
+            physical_min: self.physical_min,
+            physical_max: self.physical_max,
+            report_count: self.report_count,
+            report_size: self.report_size,
+        }
+    }
+}
+
+impl<'a, 'p> Iterator for StackFrame<'a, 'p> {
+    type Item = Result<Value<'a, 'p>, ParseError<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut it = item::Parser {
+            data: self.inner.data.get(),
+        };
+        loop {
+            let item = match it.next()? {
+                Ok(e) => e,
+                Err(e) => return Some(Err(ParseError::from_item(e))),
+            };
+            self.inner.data.set(it.data);
+            match item {
+                Item::Collection(ty) => break Some(Ok(Value::Collection(ty))),
+                Item::EndCollection => break Some(Ok(Value::EndCollection)),
+                Item::UsagePage(p) => self.usage_page = p,
+                Item::Usage16(u) => {
+                    break Some(Ok(Value::Usage {
+                        page: self.usage_page,
+                        ids: u..=u,
+                    }))
                 }
-            )*
+                Item::UsageMin(min) => {
+                    if let Some(max) = self.usage_max.take() {
+                        break Some(Ok(Value::Usage {
+                            page: self.usage_page,
+                            ids: min..=max,
+                        }));
+                    } else {
+                        self.usage_min = Some(min);
+                    }
+                }
+                Item::UsageMax(max) => {
+                    if let Some(min) = self.usage_min.take() {
+                        break Some(Ok(Value::Usage {
+                            page: self.usage_page,
+                            ids: min..=max,
+                        }));
+                    } else {
+                        self.usage_max = Some(max);
+                    }
+                }
+                Item::LogicalMin(n) => self.logical_min = n,
+                Item::LogicalMax(n) => self.logical_max = n,
+                Item::PhysicalMin(n) => self.physical_min = n,
+                Item::PhysicalMax(n) => self.physical_max = n,
+                Item::ReportCount(n) => self.report_count = n,
+                Item::ReportSize(n) => self.report_size = n,
+                e @ Item::Input(flags) | e @ Item::Output(flags) => {
+                    let mut physical_min = self.physical_min;
+                    let mut physical_max = self.physical_max;
+                    if physical_min == 0 && physical_max == 0 {
+                        physical_min = self.logical_min;
+                        physical_max = self.logical_max;
+                    }
+                    break Some(Ok(Value::Field(Field {
+                        is_input: matches!(e, Item::Input(_)),
+                        flags,
+                        logical_min: self.logical_min,
+                        logical_max: self.logical_max,
+                        physical_min,
+                        physical_max,
+                        report_count: self.report_count,
+                        report_size: self.report_size,
+                    })));
+                }
+                Item::ReportId(_) => {} // TODO
+                Item::Push => break Some(Ok(Value::StackFrame(self.duplicate()))),
+                Item::Pop => break None,
+                Item::Unit(_) => {}         // TODO
+                Item::UnitExponent(_) => {} // TODO
+                e => break Some(Err(ParseError::UnexpectedItem(e))),
+            };
         }
-
-        impl fmt::Debug for MainFlags {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.debug_struct(stringify!(MainFlags))
-                    $(.field(stringify!($flag), &self.$flag()))*
-                    .finish_non_exhaustive()
-            }
-        }
-    };
+    }
 }
 
-flags! {
-    /// Whether a value can be modified by the host.
-    constant 0
-    /// Whether array or variable fields are used in reports.
-    ///
-    /// # Example
-    ///
-    /// If a device has 50 buttons where each button has 1 state then:
-    ///
-    /// * With array data there will be 50 fields of 1 bit each (Report Count = 50, Report Size = 1).
-    /// * With variable data and Report Count = 4, Report Size = 6 there will be 4 fields of 5 bits
-    ///   each, where each field points to a single button.
-    ///
-    /// This is more efficient for keyboards, where there are many keys but only a few are pressed at
-    /// any time.
-    variable 1
-    /// Whether data is absolute or relative.
-    ///
-    /// # Example
-    ///
-    /// Mice return relative position data whereas tablets return absolute position data.
-    relative 2
-    /// Whether data may wrap around.
-    ///
-    /// # Example
-    ///
-    /// A wheel's absolute position may be expressed as a value from 1 to 100.
-    /// If the value becomes 101 it is reported as 1.
-    /// If the value becomes 0 it is reported as 100.
-    wrap 3
-    /// Whether the reported data has been processed such that the relation between the real
-    /// and reported value is no longer linear.
-    ///
-    /// # Example
-    ///
-    /// Acceleration curves, joystick dead zones.
-    nonlinear 4
-    /// Whether the control will return to a default state if not interacted with.
-    ///
-    /// # Example
-    ///
-    /// A button only stays pressed when the user interacts with it.
-    /// A switch stays toggled on or off when the user stops interacting with it.
-    nopreferred 5
-    /// Whether there is a state for a control where it doesn't send meaningful data.
-    null 6
-    /// Whether the value of an output control may change without host interaction.
-    volatile 7
-    /// Whether the control is a bitfield or emits a stream or arbitrary bytes.
-    ///
-    /// # Example
-    ///
-    /// Bar code reader.
-    buffered_bytes 8
+impl Drop for StackFrame<'_, '_> {
+    fn drop(&mut self) {
+        while matches!(self.next(), Some(Ok(_))) {}
+    }
 }
 
-/// A collection of items.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum Collection {
-    Physical,
-    Application,
-    Logical,
-    Report,
-    NamedArray,
-    UsageSwitch,
-    UsageModifier,
-    Unknown(u8),
+#[derive(Debug)]
+pub enum ParseError<'a> {
+    /// An item is longer than the amount of bytes remaining in the buffer.
+    Truncated,
+    /// An item has an unexpected data value.
+    UnexpectedData,
+    UnexpectedItem(Item<'a>),
 }
 
-impl Collection {
-    fn from_raw(raw: u8) -> Self {
-        match raw {
-            0x00 => Self::Physical,
-            0x01 => Self::Application,
-            0x02 => Self::Logical,
-            0x03 => Self::Report,
-            0x04 => Self::NamedArray,
-            0x05 => Self::UsageSwitch,
-            0x06 => Self::UsageModifier,
-            r => Self::Unknown(r),
+impl ParseError<'_> {
+    fn from_item(e: item::ParseError) -> Self {
+        match e {
+            item::ParseError::Truncated => Self::Truncated,
+            item::ParseError::UnexpectedData => Self::UnexpectedData,
         }
     }
 }
 
 #[derive(Debug)]
-pub enum ParseError {
-    /// An item is longer than the amount of bytes remaining in the buffer.
-    Truncated,
-    /// An item has an unexpected data value.
-    UnexpectedData,
+pub enum Value<'a, 'p> {
+    /// The start of a collection of fields.
+    Collection(Collection),
+    /// The end of a collection of fields.
+    EndCollection,
+    /// A single input/output/feature field.
+    Field(Field),
+    /// A usage of a field.
+    ///
+    /// Since a field may have an arbitrary amount of usages, they are returned separately.
+    ///
+    /// Usages will be returned *before* their corresponding field.
+    Usage { page: u16, ids: RangeInclusive<u16> },
+    /// A stack frame with global state.
+    ///
+    /// This is returned after a Push item.
+    /// When `next` returns `None` either a Pop item was encountered or the end of the descriptor
+    /// was reached.
+    StackFrame(StackFrame<'a, 'p>),
 }
 
-pub struct Parser<'a> {
-    data: &'a [u8],
+#[derive(Debug)]
+pub struct Field {
+    /// Whether this is an input or output field.
+    pub is_input: bool,
+    /// Flags belonging to this field.
+    pub flags: MainFlags,
+    /// The minimum value this field can contain.
+    pub logical_min: i32,
+    /// The maximum value this field can contain.
+    pub logical_max: i32,
+    /// The maximum physical value this field can represent.
+    pub physical_min: i32,
+    /// The minimum physical value this field can represent.
+    pub physical_max: i32,
+    /// How many times this field repeats.
+    pub report_count: u32,
+    /// The size of this field in bits.
+    pub report_size: u32,
 }
 
-impl<'a> Iterator for Parser<'a> {
-    type Item = Result<Item<'a>, ParseError>;
+impl Field {
+    /// Try to extract a field's value from a report.
+    ///
+    /// This only extracts a single field, i.e. it ignores `report_count`.
+    pub fn extract_u32(&self, report: &[u8], offset: u32) -> Option<u32> {
+        if self.report_size > 32 {
+            return None;
+        }
+        let (start, end) = (offset, offset + self.report_size);
+        let (start_i, end_i) = (start / 8, (end + 7) / 8);
+        let mut v = 0;
+        for (i, &b) in report.get(start_i as _..end_i as _)?.iter().enumerate() {
+            v |= u32::from(b) << i * 8 >> start % 8;
+        }
+        v %= 1 << self.report_size;
+        Some(v)
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        (!self.data.is_empty()).then(|| {
-            let e;
-            (e, self.data) = Item::parse(self.data)?;
-            Ok(e)
+    /// Try to extract a field's value from a report.
+    ///
+    /// This only extracts a single field, i.e. it ignores `report_count`.
+    pub fn extract_i32(&self, report: &[u8], offset: u32) -> Option<i32> {
+        self.extract_u32(report, offset).map(|n| {
+            // sign-extend
+            (n as i32) << 32 - self.report_size >> 32 - self.report_size
         })
     }
 }
 
-/// Parse a Report descriptor.
 pub fn parse(data: &[u8]) -> Parser<'_> {
-    Parser { data }
+    Parser { data: data.into() }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
 
     // usb/dev-hid.c
@@ -363,51 +265,187 @@ mod tests {
     ];
 
     #[track_caller]
-    fn tk(it: &mut Parser<'_>, item: Item<'_>) {
-        assert_eq!(it.next().map(Result::unwrap), Some(item));
+    fn assert_usage<'a, I>(it: &mut I, p: u16, i: RangeInclusive<u16>)
+    where
+        I: Iterator<Item = Result<Value<'a, 'a>, ParseError<'a>>>,
+    {
+        match it.next() {
+            Some(Ok(Value::Usage { page, ids })) => assert_eq!((page, ids), (p, i)),
+            e => panic!("{:#?}", e),
+        }
+    }
+
+    #[track_caller]
+    fn assert_field<'a, I>(it: &mut I, f: Field)
+    where
+        I: Iterator<Item = Result<Value<'a, 'a>, ParseError<'a>>>,
+    {
+        match it.next() {
+            Some(Ok(Value::Field(v))) => {
+                assert_eq!(v.flags, f.flags);
+                assert_eq!(v.logical_min, f.logical_min);
+                assert_eq!(v.logical_max, f.logical_max);
+                assert_eq!(v.physical_min, f.physical_min);
+                assert_eq!(v.physical_max, f.physical_max);
+                assert_eq!(v.report_count, f.report_count);
+                assert_eq!(v.report_size, f.report_size);
+            }
+            e => panic!("{:#?}", e),
+        }
     }
 
     #[test]
     fn qemu_usb_tablet() {
         let mut it = parse(QEMU_USB_TABLET);
-        let it = &mut it;
-        tk(it, Item::UsagePage(0x1));
-        tk(it, Item::Usage16(0x2));
-        tk(it, Item::Collection(Collection::Application));
-        tk(it, Item::Usage16(0x1));
-        tk(it, Item::Collection(Collection::Physical));
-        tk(it, Item::UsagePage(0x9));
-        tk(it, Item::UsageMin(1));
-        tk(it, Item::UsageMax(3));
-        tk(it, Item::LogicalMin(0));
-        tk(it, Item::LogicalMax(1));
-        tk(it, Item::ReportCount(3));
-        tk(it, Item::ReportSize(1));
-        tk(it, Item::Input(MainFlags(0b010))); // absolute, variable, data
-        tk(it, Item::ReportCount(1));
-        tk(it, Item::ReportSize(5));
-        tk(it, Item::Input(MainFlags(0b1))); // constant
-        tk(it, Item::UsagePage(1));
-        tk(it, Item::Usage16(0x30));
-        tk(it, Item::Usage16(0x31));
-        tk(it, Item::LogicalMin(0));
-        tk(it, Item::LogicalMax(0x7fff));
-        tk(it, Item::PhysicalMin(0));
-        tk(it, Item::PhysicalMax(0x7fff));
-        tk(it, Item::ReportSize(16));
-        tk(it, Item::ReportCount(2));
-        tk(it, Item::Input(MainFlags(0b010))); // absolute, variable, data
-        tk(it, Item::UsagePage(1));
-        tk(it, Item::Usage16(0x38));
-        tk(it, Item::LogicalMin(-0x7f));
-        tk(it, Item::LogicalMax(0x7f));
-        tk(it, Item::PhysicalMin(0));
-        tk(it, Item::PhysicalMax(0));
-        tk(it, Item::ReportSize(8));
-        tk(it, Item::ReportCount(1));
-        tk(it, Item::Input(MainFlags(0b110))); // relative, variable, data
-        tk(it, Item::EndCollection);
-        tk(it, Item::EndCollection);
+        let mut it = it.iter();
+        assert_usage(&mut it, 0x1, 0x2..=0x2);
+
+        assert!(matches!(
+            it.next(),
+            Some(Ok(Value::Collection(Collection::Application)))
+        ));
+
+        assert_usage(&mut it, 0x1, 0x1..=0x1);
+        assert!(matches!(
+            it.next(),
+            Some(Ok(Value::Collection(Collection::Physical)))
+        ));
+
+        assert_usage(&mut it, 0x9, 1..=3);
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0b010), // absolute, variable, data
+                logical_min: 0,
+                logical_max: 1,
+                physical_min: 0,
+                physical_max: 1,
+                report_count: 3,
+                report_size: 1,
+            },
+        );
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0b1), // constant
+                logical_min: 0,
+                logical_max: 1,
+                physical_min: 0,
+                physical_max: 1,
+                report_count: 1,
+                report_size: 5,
+            },
+        );
+        assert_usage(&mut it, 0x1, 0x30..=0x30);
+        assert_usage(&mut it, 0x1, 0x31..=0x31);
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0b010), // absolute, variable, data
+                logical_min: 0,
+                logical_max: 0x7fff,
+                physical_min: 0,
+                physical_max: 0x7fff,
+                report_count: 2,
+                report_size: 16,
+            },
+        );
+        assert_usage(&mut it, 0x1, 0x38..=0x38);
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0b110), // relative, variable, data
+                logical_min: -0x7f,
+                logical_max: 0x7f,
+                physical_min: -0x7f,
+                physical_max: 0x7f,
+                report_count: 1,
+                report_size: 8,
+            },
+        );
+        assert!(matches!(it.next(), Some(Ok(Value::EndCollection))));
+        assert!(matches!(it.next(), Some(Ok(Value::EndCollection))));
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn push() {
+        // Not a real descriptor, but the only one I could find with a Push item is excessively
+        // long.
+        const PUSH: &[u8] = &[
+            0x05, 0x01, // UsagePage(1)
+            0x15, 0x13, // LogicalMin(0x13)
+            0x25, 0x37, // LogicalMax(0x37)
+            0x95, 0x07, // ReportCount(7)
+            0x75, 0x05, // ReportSize(5)
+            0x09, 0x04, // Usage(4)
+            0x80, // Input
+            0xa4, // Push
+            0x05, 0x03, // UsagePage(3)
+            0x09, 0x02, // Usage(2)
+            0x16, 0xde, 0x00, // LogicalMin(0xde)
+            0x26, 0xad, 0x00, // LogicalMax(0xad)
+            0x95, 0x09, // ReportCount(9)
+            0x75, 0x02, // ReportSize(2)
+            0x80, // Input
+            0x09, 0x02, // Usage(2)
+            0xb4, // Pop
+            0x09, 0x02, // Usage(2)
+            0x80, // Input
+        ];
+        let mut it = parse(PUSH);
+        let mut it = it.iter();
+        assert_usage(&mut it, 1, 4..=4);
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0),
+                logical_min: 0x13,
+                logical_max: 0x37,
+                physical_min: 0x13,
+                physical_max: 0x37,
+                report_count: 7,
+                report_size: 5,
+            },
+        );
+        let mut it2 = match it.next() {
+            Some(Ok(Value::StackFrame(f))) => f,
+            e => panic!("{:#?}", e),
+        };
+        assert_usage(&mut it2, 3, 2..=2);
+        assert_field(
+            &mut it2,
+            Field {
+                is_input: true,
+                flags: MainFlags(0),
+                logical_min: 0xde,
+                logical_max: 0xad,
+                physical_min: 0xde,
+                physical_max: 0xad,
+                report_count: 9,
+                report_size: 2,
+            },
+        );
+        assert_usage(&mut it2, 3, 2..=2);
+        assert!(it2.next().is_none());
+        assert_usage(&mut it, 1, 2..=2);
+        assert_field(
+            &mut it,
+            Field {
+                is_input: true,
+                flags: MainFlags(0),
+                logical_min: 0x13,
+                logical_max: 0x37,
+                physical_min: 0x13,
+                physical_max: 0x37,
+                report_count: 7,
+                report_size: 5,
+            },
+        );
     }
 }
