@@ -123,6 +123,13 @@ impl<'a> Item<'a> {
                 .map_err(|_| UnexpectedData)
                 .map(u8::from_le_bytes)
         };
+        let d8u = || {
+            Ok(match d {
+                &[] => 0,
+                &[a] => a,
+                _ => return Err(UnexpectedData),
+            })
+        };
         let d16u = || {
             Ok(u16::from_le_bytes(match d {
                 &[] => [0, 0],
@@ -156,7 +163,7 @@ impl<'a> Item<'a> {
         let item = match tag {
             Self::INPUT => Self::Input(MainFlags(d32u()?)),
             Self::OUTPUT => Self::Output(MainFlags(d32u()?)),
-            Self::COLLECTION => Self::Collection(Collection::from_raw(d8()?)),
+            Self::COLLECTION => Self::Collection(Collection::from_raw(d8u()?)),
             Self::FEATURE => Self::Feature(MainFlags(d32u()?)),
             Self::END_COLLECTION => d_empty(Self::EndCollection)?,
 
