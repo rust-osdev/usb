@@ -2,7 +2,7 @@ use core::num::NonZeroU16;
 
 pub const PAGE: u16 = 0x09;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Usage {
     NoButton,
     Button(NonZeroU16),

@@ -48,6 +48,23 @@ macro_rules! page {
                 })
             }
         }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[non_exhaustive]
+        pub enum Usage {
+            $($v($m::Usage),)*
+        }
+
+        impl TryFrom<(u16, u16)> for Usage {
+            type Error = UnknownUsage;
+
+            fn try_from((page, usage): (u16, u16)) -> Result<Self, Self::Error> {
+                Ok(match page {
+                    $($m::PAGE => Self::$v($m::Usage::try_from(usage).map_err(|_| UnknownUsage)?),)*
+                    _ => return Err(UnknownUsage),
+                })
+            }
+        }
     };
 }
 
