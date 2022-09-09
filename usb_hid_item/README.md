@@ -39,7 +39,10 @@ let mut usages = Usages::new();
 
 fn f(val: Value, fields: &mut Vec<(Usages, Field)>, usages: &mut Usages) {
 	match val {
-		Value::Collection(c) => c.for_each(|c| f(val.unwrap(), fields, usages)),
+		Value::Collection(c) => {
+			usages.clear();
+			c.for_each(|c| f(val.unwrap(), fields, usages));
+		}
 		Value::Usage { page, ids } => usages.push((page, ids)),
 		Value::Field(f) => fields.push((mem::take(usages), f)),
 	}
