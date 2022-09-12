@@ -70,6 +70,7 @@ macro_rules! page {
 
 page! {
     GenericDesktop generic_desktop
+    Keyboard keyboard
     Button button
 }
 
