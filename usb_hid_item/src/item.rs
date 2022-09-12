@@ -241,11 +241,11 @@ flags! {
     ///
     /// If a device has 50 buttons where each button has 1 state then:
     ///
-    /// * With array data there will be 50 fields of 1 bit each (Report Count = 50, Report Size = 1).
-    /// * With variable data and Report Count = 4, Report Size = 6 there will be 4 fields of 5 bits
+    /// * With variable data there will be 50 fields of 1 bit each (Report Count = 50, Report Size = 1).
+    /// * With array data and Report Count = 4, Report Size = 6 there will be 4 fields of 5 bits
     ///   each, where each field points to a single button.
     ///
-    /// This is more efficient for keyboards, where there are many keys but only a few are pressed at
+    /// Arrays are more efficient for keyboards, where there are many keys but only a few are pressed at
     /// any time.
     variable 1
     /// Whether data is absolute or relative.
